@@ -8,7 +8,7 @@ import { definePluginSettings } from "@api/Settings";
 import { OptionType } from "@utils/types";
 
 import { t } from "./i18n";
-import { setMinDelay } from "./profileQueue";
+import { setConcurrency, setMinDelay } from "./profileQueue";
 
 /**
  * Adiciona nome e descrição traduzidos. São getters para que a tela de configurações
@@ -124,8 +124,16 @@ export const settings = definePluginSettings({
     ),
     showHypeSquad: tr(
         { type: OptionType.BOOLEAN, default: true },
-        ["HypeSquad badges", "Badges da HypeSquad"],
-        ["Bravery, Brilliance, Balance and HypeSquad Events.", "Bravery, Brilliance, Balance e HypeSquad Eventos."]
+        ["HypeSquad houses", "Casas da HypeSquad"],
+        ["Bravery, Brilliance and Balance.", "Bravery, Brilliance e Balance."]
+    ),
+    showHypeSquadEvents: tr(
+        { type: OptionType.BOOLEAN, default: true },
+        ["HypeSquad Events badge", "Badge HypeSquad Eventos"],
+        [
+            "The old HypeSquad Events badge, kept separate from the three houses.",
+            "A badge antiga HypeSquad Eventos, separada das três casas."
+        ]
     ),
     showDiscordPrograms: tr(
         { type: OptionType.BOOLEAN, default: true },
@@ -179,6 +187,20 @@ export const settings = definePluginSettings({
             "Intervalo entre um perfil e outro. Se o Discord pedir para ir mais devagar, o plugin desacelera sozinho e depois volta a acelerar."
         ]
     ),
+    loadConcurrency: tr(
+        {
+            type: OptionType.SLIDER,
+            markers: [1, 2, 3, 4, 5, 6],
+            default: 3,
+            stickToMarkers: true,
+            onChange: (n: number) => setConcurrency(n)
+        },
+        ["Profiles at once", "Perfis por vez"],
+        [
+            "How many profiles to fetch at the same time. Higher is faster; lower it if you keep getting rate limited.",
+            "Quantos perfis buscar ao mesmo tempo. Mais alto é mais rápido; diminua se tomar limite de requisições."
+        ]
+    ),
     fetchBotProfiles: tr(
         { type: OptionType.BOOLEAN, default: false },
         ["Load bot profiles", "Carregar perfil de bots"],
@@ -215,6 +237,24 @@ export const settings = definePluginSettings({
             "Começa a carregar as badges de todos os membros assim que o pesquisador abre, sem precisar clicar em \"Carregar\"."
         ]
     ),
+    memberScanSpeed: tr(
+        {
+            type: OptionType.SELECT,
+            get options() {
+                return [
+                    { label: t("Fast (250ms)", "Rápido (250ms)"), value: 250 },
+                    { label: t("Normal (400ms)", "Normal (400ms)"), value: 400, default: true },
+                    { label: t("Safe (700ms)", "Seguro (700ms)"), value: 700 },
+                    { label: t("Very safe (1200ms)", "Muito seguro (1200ms)"), value: 1200 },
+                ];
+            }
+        },
+        ["Member scan speed", "Velocidade de varredura de membros"],
+        [
+            "Gap between requests when loading the full member list. These are gateway requests, so they don't use the profile limit.",
+            "Intervalo entre requisições ao carregar a lista completa de membros. São requisições de gateway, então não usam o limite de perfil."
+        ]
+    ),
     searchShowMessageButton: tr(
         { type: OptionType.BOOLEAN, default: true },
         ["Message button in results", "Botão de mensagem nos resultados"],
@@ -240,9 +280,11 @@ export const settings = definePluginSettings({
     memberListBadgeSize: { hidden() { return !this.store.showInMemberList; } },
     showOverflowCount: { hidden() { return this.store.maxBadges === 0; } },
     loadSpeed: { hidden() { return !this.store.fetchProfiles && !this.store.showSearchButton; } },
+    loadConcurrency: { hidden() { return !this.store.fetchProfiles; } },
     fetchBotProfiles: { hidden() { return !this.store.fetchProfiles; } },
     searchMatchMode: { hidden() { return !this.store.showSearchButton; } },
     searchAutoLoad: { hidden() { return !this.store.showSearchButton; } },
+    memberScanSpeed: { hidden() { return !this.store.showSearchButton; } },
     searchShowMessageButton: { hidden() { return !this.store.showSearchButton; } },
     searchCloseOnMessage: { hidden() { return !this.store.showSearchButton || !this.store.searchShowMessageButton; } },
     searchIncludeBots: { hidden() { return !this.store.showSearchButton; } },

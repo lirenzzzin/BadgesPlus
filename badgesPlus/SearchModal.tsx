@@ -14,6 +14,7 @@ import {
 
 import { badgeIconUrl, badgeSortRank, getBadgeLabel, getFlagBadges, getTooltip, SimpleBadge } from "./badges";
 import { plural, t } from "./i18n";
+import { cancelAllMemberScans, MemberScanProgress, scanGuildMembers } from "./memberLoader";
 import { clearQueue, isDone, onQueueChange, pendingCount, queueProfiles } from "./profileQueue";
 import { settings } from "./settings";
 
@@ -100,11 +101,29 @@ function SearchBadgesModal({ guildId, modalProps }: { guildId: string; modalProp
     const myId = UserStore.getCurrentUser()?.id;
     const missing = members.filter(m => !m.done);
     const pending = pendingCount();
+    // total já carregado, sem o filtro de bots / total already loaded, without the bot filter
+    const rawLoaded = GuildMemberStore.getMemberIds(guildId).length;
+    const [scan, setScan] = useState<MemberScanProgress | null>(null);
 
     const loadMissing = () => queueProfiles(missing.map(m => m.user.id));
 
+    function startMemberScan() {
+        setScan({ loaded: rawLoaded, total: memberCount || 0, done: false, cancelled: false });
+        scanGuildMembers(
+            guildId,
+            progress => setScan(progress.done ? null : progress),
+            s.memberScanSpeed
+        );
+    }
+
+    function stopMemberScan() {
+        cancelAllMemberScans();
+        setScan(null);
+    }
+
     useEffect(() => {
         if (s.searchAutoLoad) loadMissing();
+        return () => cancelAllMemberScans();
     }, []);
 
     // badges entre os membros carregados, com contagem / badges among loaded members, with counts
@@ -175,6 +194,31 @@ function SearchBadgesModal({ guildId, modalProps }: { guildId: string; modalProp
                             </button>
                         )}
                 </div>
+
+                {(scan || (memberCount > 0 && rawLoaded < memberCount)) && (
+                    <div className="vc-badgesplus-search-info">
+                        {scan
+                            ? (
+                                <span>
+                                    {t(
+                                        `Scanning members… ${scan.loaded}${scan.total ? `/${scan.total}` : ""}`,
+                                        `Varrendo membros… ${scan.loaded}${scan.total ? `/${scan.total}` : ""}`
+                                    )}{" · "}
+                                    <button className="vc-badgesplus-link" onClick={stopMemberScan}>{t("Stop", "Parar")}</button>
+                                </span>
+                            )
+                            : (
+                                <>
+                                    <span>
+                                        {t("Discord only sent part of the member list.", "O Discord mandou só parte da lista de membros.")}
+                                    </span>
+                                    <button className="vc-badgesplus-link" onClick={startMemberScan}>
+                                        {t("Load more members", "Carregar mais membros")}
+                                    </button>
+                                </>
+                            )}
+                    </div>
+                )}
 
                 {groups.length > 0
                     ? (

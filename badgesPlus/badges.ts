@@ -105,7 +105,7 @@ export const getTooltip = (badge: SimpleBadge) =>
 
 // ---- Categorias / Categories ------------------------------------------------
 
-type Category = "nitro" | "boost" | "hypesquad" | "programs" | "legacy" | "quests" | "other";
+type Category = "nitro" | "boost" | "hypesquad" | "hypesquadEvents" | "programs" | "legacy" | "quests" | "other";
 
 const PROGRAMS = new Set([
     "staff", "partner", "certified_moderator", "bug_hunter_level_1", "bug_hunter_level_2",
@@ -116,7 +116,10 @@ export function getCategory(badge: SimpleBadge): Category {
     const { id } = badge;
     if (id === "premium" || id.startsWith("premium_tenure_")) return "nitro";
     if (id.startsWith("guild_booster_")) return "boost";
-    if (id.startsWith("hypesquad")) return "hypesquad";
+    // HypeSquad Events é uma badge antiga e separada das três casas / HypeSquad Events is an
+    // old badge, kept separate from the three houses
+    if (id === "hypesquad") return "hypesquadEvents";
+    if (id.startsWith("hypesquad_house_")) return "hypesquad";
     if (PROGRAMS.has(id)) return "programs";
     if (id === "legacy_username") return "legacy";
     if (id.startsWith("quest") || id.startsWith("orb")) return "quests";
@@ -127,6 +130,7 @@ const CATEGORY_SETTING = {
     nitro: "showNitro",
     boost: "showBoost",
     hypesquad: "showHypeSquad",
+    hypesquadEvents: "showHypeSquadEvents",
     programs: "showDiscordPrograms",
     legacy: "showLegacyUsername",
     quests: "showQuests",
