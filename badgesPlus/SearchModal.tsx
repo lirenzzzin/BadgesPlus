@@ -12,7 +12,7 @@ import {
     useEffect, useMemo, UserProfileStore, UserStore, useState
 } from "@webpack/common";
 
-import { badgeIconUrl, badgeSortRank, getBadgeLabel, getFlagBadges, getTooltip, SimpleBadge } from "./badges";
+import { badgeIconUrl, badgeSortRank, getBadgeLabel, getCategory, getFlagBadges, getTooltip, isCategoryEnabled, SimpleBadge } from "./badges";
 import { plural, t } from "./i18n";
 import { cancelAllMemberScans, MemberScanProgress, scanGuildMembers } from "./memberLoader";
 import { clearQueue, isDone, onQueueChange, pendingCount, queueProfiles } from "./profileQueue";
@@ -31,9 +31,17 @@ function useGuildMembers(guildId: string, includeBots: boolean) {
 
     useEffect(() => {
         let timer: ReturnType<typeof setTimeout> | undefined;
+        // throttle (não debounce!): agenda um recálculo, mas não empurra ele pra frente pra sempre.
+        // Com debounce, durante o carregamento contínuo o timer reiniciava a cada perfil e nunca
+        // disparava — a lista congelava e o carregamento parava. / throttle (not debounce!): schedule
+        // a recompute but don't keep pushing it back. With debounce, during continuous loading the
+        // timer reset on every profile and never fired — the list froze and loading stopped.
         const onChange = () => {
-            clearTimeout(timer);
-            timer = setTimeout(() => setTick(n => n + 1), 250);
+            if (timer != null) return;
+            timer = setTimeout(() => {
+                timer = undefined;
+                setTick(n => n + 1);
+            }, 400);
         };
         UserProfileStore.addChangeListener(onChange);
         GuildMemberStore.addChangeListener(onChange);
@@ -99,12 +107,48 @@ function SearchBadgesModal({ guildId, modalProps }: { guildId: string; modalProp
     const guild = GuildStore.getGuild(guildId);
     const memberCount = GuildMemberCountStore.getMemberCount(guildId);
     const myId = UserStore.getCurrentUser()?.id;
-    const missing = members.filter(m => !m.done);
     const pending = pendingCount();
     // total já carregado, sem o filtro de bots / total already loaded, without the bot filter
     const rawLoaded = GuildMemberStore.getMemberIds(guildId).length;
     const [scan, setScan] = useState<MemberScanProgress | null>(null);
 
+    // ---- filtros do pesquisador / search filters ----
+    const [usernameQuery, setUsernameQuery] = useState("");
+    const [lenInput, setLenInput] = useState("");
+    const [badgeQuery, setBadgeQuery] = useState("");
+
+    const lengthFilter = useMemo(() => {
+        const n = parseInt(lenInput, 10);
+        return Number.isFinite(n) && n > 0 && n <= 32 ? n : null;
+    }, [lenInput]);
+
+    // Por padrão mostra TUDO (igual antes). O filtro por categoria só entra se você ligar
+    // "Pesquisar só as categorias ligadas"; o "esconder quest" também é opcional.
+    // By default it shows EVERYTHING (like before). The category filter only kicks in if you
+    // enable "Search only the enabled categories"; the "hide quest" toggle is optional too.
+    const filtered = useMemo(() => {
+        const q = usernameQuery.trim().toLowerCase();
+        return members
+            .map(m => ({
+                ...m,
+                badges: m.badges.filter(b => {
+                    if (s.searchRespectCategories && !isCategoryEnabled(b)) return false;
+                    if (s.searchHideQuestBadges && getCategory(b) === "quests") return false;
+                    return true;
+                })
+            }))
+            .filter(m => {
+                if (lengthFilter != null && m.user.username.length !== lengthFilter) return false;
+                if (q && !m.user.username.toLowerCase().includes(q) && !m.name.toLowerCase().includes(q)) return false;
+                return true;
+            });
+    }, [
+        members, usernameQuery, lengthFilter, s.searchHideQuestBadges, s.searchRespectCategories,
+        s.showNitro, s.showBoost, s.showHypeSquad, s.showHypeSquadEvents, s.showDiscordPrograms,
+        s.showLegacyUsername, s.showQuests, s.showOther
+    ]);
+
+    const missing = filtered.filter(m => !m.done);
     const loadMissing = () => queueProfiles(missing.map(m => m.user.id));
 
     function startMemberScan() {
@@ -121,15 +165,33 @@ function SearchBadgesModal({ guildId, modalProps }: { guildId: string; modalProp
         setScan(null);
     }
 
-    useEffect(() => {
-        if (s.searchAutoLoad) loadMissing();
-        return () => cancelAllMemberScans();
-    }, []);
+    const scanning = scan != null;
 
-    // badges entre os membros carregados, com contagem / badges among loaded members, with counts
+    // Enquanto a varredura roda (ou se "carregar badges ao abrir" estiver ligado), vai puxando os
+    // perfis dos membros que faltam, pra Nitro/impulso surgirem junto com a lista. A fila deduplica,
+    // então repetir é barato e garante que nada fica de fora.
+    // While the scan runs (or if "load badges on open" is on), keep pulling the profiles of the
+    // missing members, so Nitro/boost appear alongside the list. The queue dedupes, so repeating is
+    // cheap and nothing gets left behind.
+    useEffect(() => {
+        if (!s.searchAutoLoad && !scanning) return;
+
+        const notDone = filtered.filter(m => !m.done);
+        if (!notDone.length) return;
+
+        const limit = s.searchAutoLoadLimit;
+        const allowed = limit > 0 ? Math.max(0, limit - (filtered.length - notDone.length)) : notDone.length;
+        if (allowed <= 0) return;
+
+        queueProfiles(notDone.slice(0, allowed).map(m => m.user.id));
+    }, [filtered, s.searchAutoLoad, s.searchAutoLoadLimit, scanning]);
+
+    useEffect(() => () => cancelAllMemberScans(), []);
+
+    // badges entre os membros filtrados, com contagem / badges among the filtered members, with counts
     const groups = useMemo(() => {
         const map = new Map<string, { badge: SimpleBadge; count: number; }>();
-        for (const m of members) {
+        for (const m of filtered) {
             for (const b of m.badges) {
                 const g = map.get(b.id);
                 if (g) g.count++;
@@ -139,17 +201,26 @@ function SearchBadgesModal({ guildId, modalProps }: { guildId: string; modalProp
         return [...map.values()].sort((a, b) =>
             badgeSortRank(a.badge) - badgeSortRank(b.badge) || b.count - a.count
         );
-    }, [members]);
+    }, [filtered]);
+
+    // filtra os botões de badge pelo texto digitado / narrows the badge chips by the typed text
+    const shownGroups = useMemo(() => {
+        const q = badgeQuery.trim().toLowerCase();
+        if (!q) return groups;
+        return groups.filter(({ badge }) =>
+            getBadgeLabel(badge).toLowerCase().includes(q) || badge.id.toLowerCase().includes(q)
+        );
+    }, [groups, badgeQuery]);
 
     const results = useMemo(() => {
         if (!selected.length) return [];
         const has = (m: MemberEntry, id: string) => m.badges.some(b => b.id === id);
-        return members
+        return filtered
             .filter(m => s.searchMatchMode === "any"
                 ? selected.some(id => has(m, id))
                 : selected.every(id => has(m, id)))
             .sort((a, b) => a.name.localeCompare(b.name));
-    }, [members, selected, s.searchMatchMode]);
+    }, [filtered, selected, s.searchMatchMode]);
 
     const toggle = (id: string) =>
         setSelected(sel => sel.includes(id) ? sel.filter(x => x !== id) : [...sel, id]);
@@ -220,10 +291,47 @@ function SearchBadgesModal({ guildId, modalProps }: { guildId: string; modalProp
                     </div>
                 )}
 
-                {groups.length > 0
+                <div className="vc-badgesplus-controls">
+                    <input
+                        className="vc-badgesplus-input"
+                        value={usernameQuery}
+                        onChange={e => setUsernameQuery(e.target.value)}
+                        placeholder={t("Filter by username…", "Filtrar por nome…")}
+                    />
+                    <div className="vc-badgesplus-len">
+                        <input
+                            className="vc-badgesplus-input vc-badgesplus-leninput"
+                            type="number"
+                            min={1}
+                            max={32}
+                            value={lenInput}
+                            onChange={e => setLenInput(e.target.value)}
+                            placeholder={t("chars", "letras")}
+                            aria-label={t("Username length", "Tamanho do nome de usuário")}
+                        />
+                        {[2, 3, 4].map(n => (
+                            <button
+                                key={n}
+                                className={classes("vc-badgesplus-lenbtn", lengthFilter === n && "vc-badgesplus-lenbtn-active")}
+                                aria-pressed={lengthFilter === n}
+                                onClick={() => setLenInput(lengthFilter === n ? "" : String(n))}
+                            >
+                                {n}
+                            </button>
+                        ))}
+                    </div>
+                    <input
+                        className="vc-badgesplus-input"
+                        value={badgeQuery}
+                        onChange={e => setBadgeQuery(e.target.value)}
+                        placeholder={t("Find a badge (e.g. opal, ruby)…", "Achar uma badge (ex.: opala, rubi)…")}
+                    />
+                </div>
+
+                {shownGroups.length > 0
                     ? (
                         <div className="vc-badgesplus-chips">
-                            {groups.map(({ badge, count }) => {
+                            {shownGroups.map(({ badge, count }) => {
                                 const isSelected = selected.includes(badge.id);
                                 return (
                                     <button

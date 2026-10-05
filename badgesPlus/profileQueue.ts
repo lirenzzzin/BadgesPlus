@@ -21,7 +21,7 @@ import { FluxDispatcher, UserProfileStore } from "@webpack/common";
 const logger = new Logger("BadgesPlus");
 
 const MAX_DELAY = 8000;
-const MAX_CONCURRENCY = 6;
+const MAX_CONCURRENCY = 8;
 const SPEEDUP_AFTER = 8;
 
 const queue: string[] = [];
@@ -30,7 +30,7 @@ const failed = new Set<string>();
 const listeners = new Set<() => void>();
 
 let minDelay = 500;
-let maxConcurrency = 3;
+let maxConcurrency = 5;
 let delay = minDelay;
 let streak = 0;
 let running = false;
@@ -40,12 +40,16 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const notify = () => listeners.forEach(l => l());
 
 export function setMinDelay(ms: number) {
-    minDelay = ms;
-    delay = Math.max(delay, ms);
+    const value = Number(ms);
+    if (!Number.isFinite(value) || value <= 0) return;
+    minDelay = value;
+    delay = Math.max(delay, value);
 }
 
 export function setConcurrency(n: number) {
-    maxConcurrency = Math.max(1, Math.min(MAX_CONCURRENCY, Math.round(n)));
+    const value = Math.round(Number(n));
+    if (!Number.isFinite(value)) return;
+    maxConcurrency = Math.max(1, Math.min(MAX_CONCURRENCY, value));
 }
 
 /** Perfil já carregado ou falhou (ex.: conta apagada) / Profile already loaded or failed (e.g. deleted account) */
@@ -92,7 +96,7 @@ function pump() {
 
     running = true;
     let finished = 0;
-    const total = maxConcurrency;
+    const total = Math.max(1, maxConcurrency);
 
     for (let i = 0; i < total; i++) {
         void worker().finally(() => {

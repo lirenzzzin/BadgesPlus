@@ -168,3 +168,75 @@
     background: var(--background-modifier-selected);
     color: var(--interactive-hover);
 }
+
+/* ---- Filtros do pesquisador / Search filters ---- */
+
+.vc-badgesplus-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.vc-badgesplus-input {
+    flex: 1;
+    min-width: 130px;
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--background-modifier-accent);
+    border-radius: 6px;
+    background: var(--background-secondary);
+    color: var(--text-normal);
+    font-size: 13px;
+    outline: none;
+}
+
+.vc-badgesplus-input::placeholder {
+    color: var(--text-muted);
+}
+
+.vc-badgesplus-input:focus {
+    border-color: var(--interactive-active);
+}
+
+.vc-badgesplus-len {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 0 0 auto;
+}
+
+.vc-badgesplus-leninput {
+    flex: 0 0 auto;
+    width: 70px;
+    min-width: 70px;
+    text-align: center;
+    -moz-appearance: textfield;
+}
+
+.vc-badgesplus-leninput::-webkit-outer-spin-button,
+.vc-badgesplus-leninput::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.vc-badgesplus-lenbtn {
+    min-width: 30px;
+    height: 30px;
+    padding: 0 6px;
+    border: 1px solid var(--background-modifier-accent);
+    border-radius: 6px;
+    background: var(--background-secondary);
+    color: var(--text-normal);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.vc-badgesplus-lenbtn:hover {
+    background: var(--background-modifier-hover);
+}
+
+.vc-badgesplus-lenbtn-active,
+.vc-badgesplus-lenbtn-active:hover {
+    border-color: var(--green-360, #23a55a);
+    box-shadow: 0 0 0 1px var(--green-360, #23a55a);
+}
