@@ -39,16 +39,28 @@
 }
 
 .vc-badgesplus-link {
-    background: none;
-    border: none;
-    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border: 1px solid var(--background-modifier-accent);
+    border-radius: 999px;
+    background: var(--background-secondary);
+    color: var(--text-normal);
     font-size: 12px;
-    color: var(--text-link);
+    font-weight: 500;
+    line-height: 1.2;
     cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
 }
 
 .vc-badgesplus-link:hover {
-    text-decoration: underline;
+    background: var(--background-modifier-hover);
+    border-color: var(--interactive-active);
+}
+
+.vc-badgesplus-link:active {
+    transform: scale(0.97);
 }
 
 .vc-badgesplus-chips {
@@ -61,17 +73,24 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 10px;
+    padding: 5px 11px;
     border: 1px solid var(--background-modifier-accent);
     border-radius: 999px;
     background: var(--background-secondary);
     color: var(--text-normal);
     font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, transform 80ms ease;
 }
 
 .vc-badgesplus-chip:hover {
     background: var(--background-modifier-hover);
+    border-color: var(--interactive-active);
+}
+
+.vc-badgesplus-chip:active {
+    transform: scale(0.98);
 }
 
 .vc-badgesplus-chip-selected,
@@ -167,6 +186,30 @@
 .vc-badgesplus-message:hover {
     background: var(--background-modifier-selected);
     color: var(--interactive-hover);
+}
+
+.vc-badgesplus-addfriend {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border: none;
+    border-radius: 50%;
+    background: var(--background-secondary);
+    color: var(--interactive-normal);
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease, transform 80ms ease;
+}
+
+.vc-badgesplus-addfriend:hover {
+    background: var(--green-360, #23a55a);
+    color: #fff;
+}
+
+.vc-badgesplus-addfriend:active {
+    transform: scale(0.94);
 }
 
 /* ---- Filtros do pesquisador / Search filters ---- */

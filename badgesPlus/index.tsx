@@ -14,8 +14,9 @@ import { findComponentByCodeLazy } from "@webpack";
 import { SelectedGuildStore, useStateFromStores } from "@webpack/common";
 import type { ReactNode } from "react";
 
+import { ensureCacheLoaded, flush } from "./badgeCache";
 import { t } from "./i18n";
-import { clearQueue, setConcurrency, setMinDelay } from "./profileQueue";
+import { clearQueue, initCooldown, setConcurrency, setMinDelay } from "./profileQueue";
 import { openSearchBadges } from "./SearchModal";
 import { settings } from "./settings";
 import { UserBadges } from "./UserBadges";
@@ -80,17 +81,24 @@ export default definePlugin({
     start() {
         setMinDelay(settings.store.loadSpeed);
         setConcurrency(settings.store.loadConcurrency);
+        void ensureCacheLoaded();
+        void initCooldown();
 
         addMessageDecoration("vc-badgesplus", props =>
-            props.message?.author ? <UserBadges user={props.message.author} where="chat" /> : null
+            props.message?.author
+                ? <UserBadges user={props.message.author} where="chat" guildId={props.channel?.guild_id ?? undefined} />
+                : null
         );
-        addMemberListDecorator("vc-badgesplus", ({ user }) =>
-            user ? <UserBadges user={user} where="list" /> : null
+        addMemberListDecorator("vc-badgesplus", ({ user, type }) =>
+            user
+                ? <UserBadges user={user} where="list" guildId={type === "guild" ? (SelectedGuildStore.getGuildId() ?? undefined) : undefined} />
+                : null
         );
     },
 
     stop() {
         clearQueue();
+        void flush();
         removeMessageDecoration("vc-badgesplus");
         removeMemberListDecorator("vc-badgesplus");
     }

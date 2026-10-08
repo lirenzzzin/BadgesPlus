@@ -190,8 +190,8 @@ export const settings = definePluginSettings({
     loadConcurrency: tr(
         {
             type: OptionType.SLIDER,
-            markers: [1, 2, 3, 4, 5, 6, 8],
-            default: 5,
+            markers: [1, 2, 3, 4, 5, 6],
+            default: 2,
             stickToMarkers: true,
             onChange: (n: number) => setConcurrency(n)
         },
@@ -230,11 +230,11 @@ export const settings = definePluginSettings({
         ["How to combine the selected badges in the search.", "Como combinar as badges selecionadas no pesquisador."]
     ),
     searchAutoLoad: tr(
-        { type: OptionType.BOOLEAN, default: true },
+        { type: OptionType.BOOLEAN, default: false },
         ["Load badges when opening the search", "Carregar badges ao abrir o pesquisador"],
         [
-            "Starts loading every member's badges as soon as the search opens (and while loading members), without clicking \"Load\". This is what makes Nitro/boost show up.",
-            "Começa a carregar as badges de todos os membros assim que o pesquisador abre (e enquanto carrega membros), sem precisar clicar em \"Carregar\". É isso que faz Nitro/impulso aparecer."
+            "Off by default: automatically loading thousands of profiles can get your account globally rate-limited (then nothing loads, not even in DMs). Turn it on if you want it, or just use the Load button.",
+            "Desligado por padrão: carregar milhares de perfis sozinho pode colocar sua conta em limite global (aí não carrega nada, nem em DM). Ligue se quiser, ou use o botão Carregar."
         ]
     ),
     memberScanSpeed: tr(

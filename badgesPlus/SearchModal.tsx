@@ -4,18 +4,19 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { openUserProfile } from "@utils/discord";
 import { classes } from "@utils/misc";
 import { RenderModalProps, User } from "@vencord/discord-types";
+import { findByPropsLazy } from "@webpack";
 import {
-    ChannelActionCreators, GuildMemberCountStore, GuildMemberStore, GuildStore, Modal, openModal, Tooltip,
-    useEffect, useMemo, UserProfileStore, UserStore, useState
+    ChannelActionCreators, GuildMemberCountStore, GuildMemberStore, GuildStore, MessageActions, Modal, openModal,
+    showToast, Tooltip, useEffect, useMemo, useRef, UserProfileStore, UserStore, useState
 } from "@webpack/common";
 
-import { badgeIconUrl, badgeSortRank, getBadgeLabel, getCategory, getFlagBadges, getTooltip, isCategoryEnabled, SimpleBadge } from "./badges";
+import { getBoostIcon, getCachedBadges, onCacheChange } from "./badgeCache";
+import { badgeIconUrl, badgeSortRank, boostLevelFromPremiumSince, getBadgeLabel, getCategory, getFlagBadges, getTooltip, isCategoryEnabled, makeBoostBadge, SimpleBadge } from "./badges";
 import { plural, t } from "./i18n";
 import { cancelAllMemberScans, MemberScanProgress, scanGuildMembers } from "./memberLoader";
-import { clearQueue, isDone, onQueueChange, pendingCount, queueProfiles } from "./profileQueue";
+import { clearQueue, getQueueStats, isDone, onQueueChange, pendingCount, queueProfiles } from "./profileQueue";
 import { settings } from "./settings";
 
 interface MemberEntry {
@@ -23,6 +24,58 @@ interface MemberEntry {
     name: string;
     badges: SimpleBadge[];
     done: boolean;
+}
+
+/** Embaralha no lugar (Fisher-Yates) / shuffles in place */
+function shuffle<T>(input: T[]): T[] {
+    for (let i = input.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [input[i], input[j]] = [input[j], input[i]];
+    }
+    return input;
+}
+
+// Ações de amizade do Discord / Discord's relationship actions
+const RelationshipActions = findByPropsLazy("sendRequest", "addRelationship") as {
+    sendRequest?: (data: { discordTag: string; }) => void;
+} | undefined;
+
+/** Abre o chat (DM) com a pessoa / opens the DM chat with the person */
+function openDm(userId: string) {
+    try {
+        (ChannelActionCreators as any).openPrivateChannel({ recipientIds: [userId], navigateToChannel: true });
+    } catch (e) {
+        console.error("[BadgesPlus] falha ao abrir a DM / failed to open the DM", e);
+    }
+}
+
+/** Manda um "oi" na DM e já pula pra conversa / sends a "hi" in the DM and jumps to the chat */
+async function sendHi(userId: string) {
+    try {
+        let channelId: string | undefined = (ChannelActionCreators as any)?.getDMFromUserId?.(userId);
+        if (!channelId) {
+            const res = await (ChannelActionCreators as any).ensurePrivateChannel(userId);
+            channelId = typeof res === "string" ? res : res?.id;
+        }
+        if (!channelId) throw new Error("canal não encontrado");
+
+        MessageActions.sendMessage(channelId, { content: "oi", tts: false, invalidEmojis: [], validNonShortcutEmojis: [] });
+        openDm(userId);
+        showToast("oi enviado!");
+    } catch (e) {
+        console.error("[BadgesPlus] falha ao mandar oi / failed to send hi", e);
+        showToast("Falha ao mandar oi — veja o console");
+    }
+}
+
+/** Manda pedido de amizade (a API espera a tag "nome#0000") / sends a friend request */
+function addFriend(user: User) {
+    try {
+        const discriminator = (user as any).discriminator ?? "0";
+        RelationshipActions?.sendRequest?.({ discordTag: `${user.username}#${discriminator}` });
+    } catch (e) {
+        console.error("[BadgesPlus] falha ao adicionar amigo / failed to add friend", e);
+    }
 }
 
 /** Recalcula quando perfis, membros ou a fila mudam / Recomputes when profiles, members or the queue change */
@@ -46,11 +99,13 @@ function useGuildMembers(guildId: string, includeBots: boolean) {
         UserProfileStore.addChangeListener(onChange);
         GuildMemberStore.addChangeListener(onChange);
         const unsubscribe = onQueueChange(onChange);
+        const unsubscribeCache = onCacheChange(onChange);
         return () => {
             clearTimeout(timer);
             UserProfileStore.removeChangeListener(onChange);
             GuildMemberStore.removeChangeListener(onChange);
             unsubscribe();
+            unsubscribeCache();
         };
     }, []);
 
@@ -61,10 +116,20 @@ function useGuildMembers(guildId: string, includeBots: boolean) {
             if (!user || (user.bot && !includeBots)) continue;
 
             const profile = UserProfileStore.getUserProfile(id);
+            let badges = (profile?.badges as SimpleBadge[] | undefined) ?? getCachedBadges(id) ?? getFlagBadges(user);
+
+            // Badge de impulso sem buscar perfil: vem do premiumSince do membro. O ícone é aprendido
+            // de qualquer perfil de booster já carregado. / Boost badge without a profile fetch: it
+            // comes from the member's premiumSince. The icon is learned from any booster profile cached.
+            const member = GuildMemberStore.getMember(guildId, id);
+            const level = boostLevelFromPremiumSince((member as any)?.premiumSince);
+            const boost = makeBoostBadge(level, getBoostIcon(level));
+            if (boost && !badges.some(b => b.id === boost.id)) badges = [...badges, boost];
+
             entries.push({
                 user,
                 name: GuildMemberStore.getNick(guildId, id) ?? (user as any).globalName ?? user.username,
-                badges: (profile?.badges as SimpleBadge[] | undefined) ?? getFlagBadges(user),
+                badges,
                 done: isDone(id)
             });
         }
@@ -99,6 +164,14 @@ function MessageIcon() {
     );
 }
 
+function FriendIcon() {
+    return (
+        <svg width={16} height={16} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M9.5 12.5a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-3.1 0-5.6 1.7-5.6 4V21h11.2v-2.5c0-2.3-2.5-4-5.6-4Zm8.75-6.75V5.5h-1.5v2.25H14.5v1.5h2.25V11.5h1.5V9.25h2.25v-1.5Z" />
+        </svg>
+    );
+}
+
 function SearchBadgesModal({ guildId, modalProps }: { guildId: string; modalProps: RenderModalProps; }) {
     const s = settings.use();
     const [selected, setSelected] = useState<string[]>([]);
@@ -111,6 +184,13 @@ function SearchBadgesModal({ guildId, modalProps }: { guildId: string; modalProp
     // total já carregado, sem o filtro de bots / total already loaded, without the bot filter
     const rawLoaded = GuildMemberStore.getMemberIds(guildId).length;
     const [scan, setScan] = useState<MemberScanProgress | null>(null);
+    const [stats, setStats] = useState(getQueueStats());
+
+    // Atualiza o placar dos perfis uma vez por segundo / refresh the profile tally once a second
+    useEffect(() => {
+        const interval = setInterval(() => setStats(getQueueStats()), 1000);
+        return () => clearInterval(interval);
+    }, []);
 
     // ---- filtros do pesquisador / search filters ----
     const [usernameQuery, setUsernameQuery] = useState("");
@@ -149,14 +229,24 @@ function SearchBadgesModal({ guildId, modalProps }: { guildId: string; modalProp
     ]);
 
     const missing = filtered.filter(m => !m.done);
-    const loadMissing = () => queueProfiles(missing.map(m => m.user.id));
+    // Embaralha também no botão manual, pela mesma razão do timer.
+    // Shuffle the manual button too, same reason as the timer.
+    const loadMissing = () => queueProfiles(shuffle(missing.map(m => m.user.id)));
+
+    // ids que casam com o filtro de nome/tamanho, sempre atualizado pro timer ler
+    // ids matching the name/length filter, kept fresh for the timer to read
+    const filteredIdsRef = useRef<string[]>([]);
+    useEffect(() => {
+        filteredIdsRef.current = filtered.map(m => m.user.id);
+    }, [filtered]);
+
+    const hasTextFilter = usernameQuery.trim().length > 0 || lengthFilter != null;
 
     function startMemberScan() {
         setScan({ loaded: rawLoaded, total: memberCount || 0, done: false, cancelled: false });
         scanGuildMembers(
             guildId,
-            progress => setScan(progress.done ? null : progress),
-            s.memberScanSpeed
+            progress => setScan(progress.done ? null : progress)
         );
     }
 
@@ -167,26 +257,59 @@ function SearchBadgesModal({ guildId, modalProps }: { guildId: string; modalProp
 
     const scanning = scan != null;
 
-    // Enquanto a varredura roda (ou se "carregar badges ao abrir" estiver ligado), vai puxando os
-    // perfis dos membros que faltam, pra Nitro/impulso surgirem junto com a lista. A fila deduplica,
-    // então repetir é barato e garante que nada fica de fora.
-    // While the scan runs (or if "load badges on open" is on), keep pulling the profiles of the
-    // missing members, so Nitro/boost appear alongside the list. The queue dedupes, so repeating is
-    // cheap and nothing gets left behind.
+    // Carregamento independente do React: um timer lê direto as stores e reenfileira quem ainda não
+    // tem perfil. Quando há filtro de nome/tamanho, ele PRIORIZA quem casa com o filtro — assim você
+    // acha o que quer (ex.: 3 letras) sem varrer o servidor inteiro em ordem.
+    // React-independent loading: a timer reads the stores directly and re-queues whoever has no
+    // profile yet. When there's a name/length filter it PRIORITIZES the matching members — so you
+    // find what you want (e.g. 3-char names) without scanning the whole server in order.
     useEffect(() => {
-        if (!s.searchAutoLoad && !scanning) return;
+        if (!s.searchAutoLoad && !scanning && !hasTextFilter) return;
 
-        const notDone = filtered.filter(m => !m.done);
-        if (!notDone.length) return;
+        const loadMissingNow = () => {
+            const allIds = GuildMemberStore.getMemberIds(guildId);
+            const allMissing = allIds.filter(id => !isDone(id));
+            if (!allMissing.length) return;
 
-        const limit = s.searchAutoLoadLimit;
-        const allowed = limit > 0 ? Math.max(0, limit - (filtered.length - notDone.length)) : notDone.length;
-        if (allowed <= 0) return;
+            let ordered: string[];
 
-        queueProfiles(notDone.slice(0, allowed).map(m => m.user.id));
-    }, [filtered, s.searchAutoLoad, s.searchAutoLoadLimit, scanning]);
+            const priorityIds = filteredIdsRef.current;
+            if (hasTextFilter && priorityIds.length && priorityIds.length < allIds.length) {
+                // Com filtro: quem casa primeiro; o resto embaralhado.
+                // With a filter: matches first; the rest shuffled.
+                const prioritySet = new Set(priorityIds);
+                ordered = [
+                    ...allMissing.filter(id => prioritySet.has(id)),
+                    ...shuffle(allMissing.filter(id => !prioritySet.has(id)))
+                ];
+            } else {
+                // Sem filtro: embaralha pra NÃO pegar sempre os mesmos de cima.
+                // Without a filter: shuffle so it does NOT always grab the same top ones.
+                ordered = shuffle([...allMissing]);
+            }
 
-    useEffect(() => () => cancelAllMemberScans(), []);
+            const limit = s.searchAutoLoadLimit;
+            if (limit > 0) {
+                const doneCount = allIds.length - allMissing.length;
+                ordered = ordered.slice(0, Math.max(0, limit - doneCount));
+            }
+
+            if (ordered.length) queueProfiles(ordered);
+        };
+
+        loadMissingNow();
+        const interval = setInterval(loadMissingNow, 1000);
+        return () => clearInterval(interval);
+    }, [guildId, s.searchAutoLoad, s.searchAutoLoadLimit, scanning, hasTextFilter]);
+
+    // Ao fechar o pesquisador, para a varredura e LIMPA a fila: não deixa carregamento de servidor
+    // gigante rodando em segundo plano (era isso que estourava o limite e travava as DMs).
+    // On closing the search, stop the scan and CLEAR the queue: don't leave a huge guild load running
+    // in the background (that's what blew the rate limit and froze DMs).
+    useEffect(() => () => {
+        cancelAllMemberScans();
+        clearQueue();
+    }, []);
 
     // badges entre os membros filtrados, com contagem / badges among the filtered members, with counts
     const groups = useMemo(() => {
@@ -225,18 +348,9 @@ function SearchBadgesModal({ guildId, modalProps }: { guildId: string; modalProp
     const toggle = (id: string) =>
         setSelected(sel => sel.includes(id) ? sel.filter(x => x !== id) : [...sel, id]);
 
-    function sendMessage(userId: string) {
-        if (s.searchCloseOnMessage) modalProps.onClose();
-        // O Discord agora espera um objeto; passar só o ID (como o openPrivateChannel do Vencord
-        // faz) cria um grupo vazio. / Discord now expects an object; passing just the ID (like
-        // Vencord's openPrivateChannel helper does) creates an empty group DM.
-        ChannelActionCreators.openPrivateChannel({ recipientIds: [userId], navigateToChannel: true });
-    }
-
     const emptyText = s.searchMatchMode === "any"
         ? t("Nobody has any of the selected badges.", "Ninguém tem nenhuma das badges selecionadas.")
         : t("Nobody has all the selected badges.", "Ninguém tem todas as badges selecionadas.");
-    const messageLabel = (name: string) => t(`Send a message to ${name}`, `Mandar mensagem para ${name}`);
 
     return (
         <Modal
@@ -256,7 +370,7 @@ function SearchBadgesModal({ guildId, modalProps }: { guildId: string; modalProp
                         ? (
                             <span>
                                 {t(`Loading… ${pending} left`, `Carregando… ${pending} restantes`)}{" · "}
-                                <button className="vc-badgesplus-link" onClick={clearQueue}>{t("Stop", "Parar")}</button>
+                                <button className="vc-badgesplus-link" onClick={clearQueue}>{t("Stop profiles", "Parar perfis")}</button>
                             </span>
                         )
                         : missing.length > 0 && (
@@ -275,7 +389,7 @@ function SearchBadgesModal({ guildId, modalProps }: { guildId: string; modalProp
                                         `Scanning members… ${scan.loaded}${scan.total ? `/${scan.total}` : ""}`,
                                         `Varrendo membros… ${scan.loaded}${scan.total ? `/${scan.total}` : ""}`
                                     )}{" · "}
-                                    <button className="vc-badgesplus-link" onClick={stopMemberScan}>{t("Stop", "Parar")}</button>
+                                    <button className="vc-badgesplus-link" onClick={stopMemberScan}>{t("Stop members", "Parar membros")}</button>
                                 </span>
                             )
                             : (
@@ -290,6 +404,23 @@ function SearchBadgesModal({ guildId, modalProps }: { guildId: string; modalProp
                             )}
                     </div>
                 )}
+
+                <div className="vc-badgesplus-search-info">
+                    <span>
+                        {t(
+                            `Profiles: ${stats.ok} loaded${stats.failed ? ` · ${stats.failed} unavailable` : ""}${stats.pending ? ` · ${stats.pending} queued` : ""}`,
+                            `Perfis: ${stats.ok} carregados${stats.failed ? ` · ${stats.failed} indisponíveis` : ""}${stats.pending ? ` · ${stats.pending} na fila` : ""}`
+                        )}
+                    </span>
+                    {stats.pausedMs > 0 && (
+                        <span>
+                            {t(
+                                `Waiting on Discord's limit (~${Math.ceil(stats.pausedMs / 1000)}s)`,
+                                `Aguardando limite do Discord (~${Math.ceil(stats.pausedMs / 1000)}s)`
+                            )}
+                        </span>
+                    )}
+                </div>
 
                 <div className="vc-badgesplus-controls">
                     <input
@@ -362,7 +493,7 @@ function SearchBadgesModal({ guildId, modalProps }: { guildId: string; modalProp
                         </div>
                         {results.slice(0, s.searchMaxResults).map(m => (
                             <div key={m.user.id} className="vc-badgesplus-row">
-                                <div className="vc-badgesplus-person" onClick={() => openUserProfile(m.user.id)}>
+                                <div className="vc-badgesplus-person" onClick={() => openDm(m.user.id)}>
                                     <img
                                         className="vc-badgesplus-avatar"
                                         src={m.user.getAvatarURL(guildId, 32)}
@@ -381,18 +512,32 @@ function SearchBadgesModal({ guildId, modalProps }: { guildId: string; modalProp
                                     ))}
                                 </div>
                                 {s.searchShowMessageButton && m.user.id !== myId && !m.user.bot && (
-                                    <Tooltip text={messageLabel(m.name)}>
-                                        {props => (
-                                            <button
-                                                {...props}
-                                                className="vc-badgesplus-message"
-                                                aria-label={messageLabel(m.name)}
-                                                onClick={() => sendMessage(m.user.id)}
-                                            >
-                                                <MessageIcon />
-                                            </button>
-                                        )}
-                                    </Tooltip>
+                                    <>
+                                        <Tooltip text={t("Send \"oi\"", "Mandar \"oi\"")}>
+                                            {props => (
+                                                <button
+                                                    {...props}
+                                                    className="vc-badgesplus-message"
+                                                    aria-label={t("Send \"oi\"", "Mandar \"oi\"")}
+                                                    onClick={() => void sendHi(m.user.id)}
+                                                >
+                                                    <MessageIcon />
+                                                </button>
+                                            )}
+                                        </Tooltip>
+                                        <Tooltip text={t("Add friend", "Adicionar amigo")}>
+                                            {props => (
+                                                <button
+                                                    {...props}
+                                                    className="vc-badgesplus-addfriend"
+                                                    aria-label={t("Add friend", "Adicionar amigo")}
+                                                    onClick={() => addFriend(m.user)}
+                                                >
+                                                    <FriendIcon />
+                                                </button>
+                                            )}
+                                        </Tooltip>
+                                    </>
                                 )}
                             </div>
                         ))}

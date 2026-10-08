@@ -80,6 +80,31 @@ const BOOST_MONTHS = [0, 1, 2, 3, 6, 9, 12, 15, 18, 24];
 const tenureMonths = (id: string) => Number(/^premium_tenure_(\d+)_month/.exec(id)?.[1] ?? NaN);
 const boostLevel = (id: string) => Number(/^guild_booster_lvl(\d+)/.exec(id)?.[1] ?? NaN);
 
+/**
+ * Nível de impulso (1..9) a partir do `premiumSince` do membro. Isso vem junto com o membro na
+ * varredura do gateway, então NÃO precisa buscar perfil pra saber que a pessoa impulsiona.
+ * Boost level (1..9) from the member's `premiumSince`. It comes with the member in the gateway scan,
+ * so you DON'T need to fetch a profile to know someone boosts.
+ */
+export function boostLevelFromPremiumSince(premiumSince: string | Date | null | undefined, now = Date.now()): number {
+    if (!premiumSince) return 0;
+    const start = new Date(premiumSince).getTime();
+    if (!Number.isFinite(start)) return 0;
+    const months = (now - start) / (1000 * 60 * 60 * 24 * 30.4375);
+    let lvl = 0;
+    for (let i = 1; i < BOOST_MONTHS.length; i++) {
+        if (months >= BOOST_MONTHS[i]) lvl = i;
+        else break;
+    }
+    return lvl;
+}
+
+/** Monta a badge de impulso a partir do nível + ícone conhecido / builds the boost badge from level + known icon */
+export function makeBoostBadge(level: number, icon: string | undefined): SimpleBadge | null {
+    if (level < 1 || !icon) return null;
+    return { id: `guild_booster_lvl${level}`, description: "Server Boost", icon };
+}
+
 /** Nome curto da badge / Short badge name */
 export function getBadgeLabel(badge: SimpleBadge): string {
     if (LABELS[badge.id]) return t(...LABELS[badge.id]);
